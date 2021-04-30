@@ -6,7 +6,7 @@ import com.fasterxml.jackson.annotation.JsonFormat;
 import java.util.Date;
 import java.util.List;
 
-public class BaseRecInfoDTO {
+public class BaseRecInfoDTO extends BaseRecInfoExtDTO{
 	private String eventId;
 	private String eventType;
 	private String eventSubType;

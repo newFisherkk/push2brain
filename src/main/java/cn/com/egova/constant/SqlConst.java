@@ -27,4 +27,7 @@ public class SqlConst {
 			"a.create_time handlerStartTime,a.refresh_time handlerEndTime,a.act_deadline_char handlerLimitTime,(case when a.deadline_time is null or a.deadline_time < a.refresh_time then '已超期' else '未超期' end) handlerOverTime" +
 			" FROM to_his_wf_act_inst a,tc_human h" +
 			" WHERE h.human_id = a.human_id and a.rec_id=?";
+	
+	public static final String getRecBaseExtSql = "SELECT task_num as taskId,event_type_name as eventSorB,district_name as region,street_name as streetName,community_name as communityName,patrol_name as supervisorName,first_depart_name as firstHandleUnit,second_depart_name as secondHandleUnit from to_rec where rec_id=?";
+	public static final String getRecBaseExtSqlInStat = "SELECT event_state_name as eventStatus,dispose_num as handleNumber,rework_num as reworkNumber,inst_time as newInstTime,dispose_unit_name as handleUnitName,archive_time as resultEventTime,archive_human_name as resultEventUserName,cancel_time as cancelEventTime,cancel_opinion as cancelOpinion from to_stat_info where rec_id=?";
 }

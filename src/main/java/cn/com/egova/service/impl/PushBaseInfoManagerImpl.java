@@ -1,6 +1,7 @@
 package cn.com.egova.service.impl;
 
 import cn.com.egova.bean.*;
+import cn.com.egova.config.NamedThreadPoolFactory;
 import cn.com.egova.constant.SqlConst;
 import cn.com.egova.service.PushBaseInfoManager;
 import cn.com.egova.tools.HttpClientPoolUtils;
@@ -23,8 +24,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.text.SimpleDateFormat;
 import java.util.*;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 
 
 @Service
@@ -41,8 +41,8 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 	JdbcTemplate jtStat;
 	@Autowired
 	ShareFileInfo shareFileInfo;
-	
-	private static final String SENDER_CODE = "推送至城市大脑";
+	ExecutorService singleThreadExecutor = new ThreadPoolExecutor(5, 5, 0, TimeUnit.SECONDS,
+			new ArrayBlockingQueue<>(50), new NamedThreadPoolFactory("push-media-pool"));
 	private static final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
 	private static final String FILE_SEPERATOR = "/";
 	
@@ -56,6 +56,9 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 
 	@Value("${push.rec.auth.url}")
 	private String getTokenUrl;
+
+	@Value("${senderCode}")
+	private String SENDER_CODE;
 	
 	public static String getCurrentDateStr(SimpleDateFormat sdf){
 		Date date = new Date();
@@ -99,7 +102,6 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 		}
 		ResultInfo httpResult;
 		String result = "";
-		ExecutorService singleThreadExecutor = Executors.newSingleThreadExecutor();
 		if (recList.size() > 0){
 			for(final Map<String, Object> map : recList){
 				Object recID = map.get("rec_id");
@@ -122,6 +124,7 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 				baseRecInfoDTO.setDistrictCode(getRegionCode(map.get("district_id")));
 				baseRecInfoDTO.setCityCode(regionCode);
 				setReportInfo(baseRecInfoDTO,recID,map.get("patrol_id"));
+				setRecExtInfo(recID,baseRecInfoDTO);
 				setProcessInfo(baseRecInfoDTO,recID);
 				List<Map<String, Object>> mediaList = jtBiz.queryForList("SELECT * from to_media where relation_id=? and delete_flag=0", recID);
 				if(mediaList.size() == 0){
@@ -187,7 +190,34 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 				}
 			}
 		}
-		singleThreadExecutor.shutdown();
+	}
+
+	private void setRecExtInfo(Object recID, BaseRecInfoDTO baseRecInfoDTO) {
+		List<Map<String, Object>> bizMap = jtBiz.queryForList(SqlConst.getRecBaseExtSql, recID);
+		if(bizMap.size() > 0){
+			Map<String, Object> map = bizMap.get(0);
+			baseRecInfoDTO.setTaskId(String.valueOf(map.get("taskId")));
+			baseRecInfoDTO.setEventSorB((String) map.get("eventSorB"));
+			baseRecInfoDTO.setRegion((String) map.get("region"));
+			baseRecInfoDTO.setStreetName((String) map.get("streetName"));
+			baseRecInfoDTO.setCommunityName((String) map.get("communityName"));
+			baseRecInfoDTO.setFirstHandleUnit((String) map.get("firstHandleUnit"));
+			baseRecInfoDTO.setSupervisorName((String) map.get("supervisorName"));
+			baseRecInfoDTO.setSecondHandleUnit((String) map.get("secondHandleUnit"));
+		}
+		List<Map<String, Object>> statMap = jtStat.queryForList(SqlConst.getRecBaseExtSqlInStat, recID);
+		if(statMap.size() > 0){
+			Map<String, Object> map = statMap.get(0);
+			baseRecInfoDTO.setEventStatus((String) map.get("eventStatus"));
+			baseRecInfoDTO.setHandleNumber((String) map.get("handleNumber"));
+			baseRecInfoDTO.setReworkNumber((String) map.get("reworkNumber"));
+			baseRecInfoDTO.setNewInstTime((Date) map.get("newInstTime"));
+			baseRecInfoDTO.setHandleUnitName((String) map.get("handleUnitName"));
+			baseRecInfoDTO.setResultEventTime((String) map.get("resultEventTime"));
+			baseRecInfoDTO.setResultEventUserName((String) map.get("resultEventUserName"));
+			baseRecInfoDTO.setCancelEventTime((Date) map.get("cancelEventTime"));
+			baseRecInfoDTO.setCancelOpinion((String) map.get("cancelOpinion"));
+		}
 	}
 
 	@Override
