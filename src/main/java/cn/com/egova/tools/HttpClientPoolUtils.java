@@ -46,7 +46,7 @@ public class HttpClientPoolUtils {
     private static PoolingHttpClientConnectionManager connMgr;
     private static RequestConfig requestConfig;
     private static final int MAX_CON_TIMEOUT = 5000;
-    private static final int MAX_READ_TIMEOUT = 10000;
+    private static final int MAX_READ_TIMEOUT = 60000;
 
     static {
         Registry<ConnectionSocketFactory> socketFactoryRegistry = RegistryBuilder.<ConnectionSocketFactory>create()

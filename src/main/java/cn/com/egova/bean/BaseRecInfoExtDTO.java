@@ -6,27 +6,29 @@ import com.fasterxml.jackson.annotation.JsonFormat;
 import java.util.Date;
 
 public class BaseRecInfoExtDTO {
-	private String taskId;
-	private String eventSorB;
-	private String region;
-	private String streetName;
-	private String communityName;
-	private String eventStatus;
+	private String taskId;//任务号
+	private String eventSorB; //问题类型（事件/部件）
+	private String region; //所属区域
+	private String streetName; //所属街道
+	private String communityName; //所属社区
+	private String eventStatus; //问题状态
 	@JsonFormat(pattern="yyyy-MM-dd HH:mm:ss", timezone="GMT+8")
 	@JSONField(format ="yyyy-MM-dd HH:mm:ss")
-	private Date newInstTime;
-	private String handleUnitName;
-	private String handleNumber;
-	private String reworkNumber;
-	private String resultEventTime;
-	private String resultEventUserName;
+	private Date newInstTime;  //立案时间
+	private String handleUnitName; //处置部门
+	private String handleNumber;  //处置数
+	private String reworkNumber;  //返工数
 	@JsonFormat(pattern="yyyy-MM-dd HH:mm:ss", timezone="GMT+8")
 	@JSONField(format ="yyyy-MM-dd HH:mm:ss")
-	private Date cancelEventTime;
-	private String cancelOpinion;
-	private String supervisorName;
-	private String firstHandleUnit;
-	private String secondHandleUnit;
+	private Date resultEventTime; //结案时间
+	private String resultEventUserName; //结案人
+	@JsonFormat(pattern="yyyy-MM-dd HH:mm:ss", timezone="GMT+8")
+	@JSONField(format ="yyyy-MM-dd HH:mm:ss")
+	private Date cancelEventTime; //作废时间
+	private String cancelOpinion; //作废意见
+	private String supervisorName; //监督员
+	private String firstHandleUnit; //一级处置部门
+	private String secondHandleUnit; //二级处置部门
 
 	public String getTaskId() {
 		return taskId;
@@ -93,11 +95,11 @@ public class BaseRecInfoExtDTO {
 		this.reworkNumber = reworkNumber;
 	}
 
-	public String getResultEventTime() {
+	public Date getResultEventTime() {
 		return resultEventTime;
 	}
 
-	public void setResultEventTime(String resultEventTime) {
+	public void setResultEventTime(Date resultEventTime) {
 		this.resultEventTime = resultEventTime;
 	}
 

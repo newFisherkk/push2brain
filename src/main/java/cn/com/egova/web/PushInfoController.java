@@ -14,7 +14,7 @@ public class PushInfoController {
 	
 	@PostMapping(value = "/pushrec")
 	private void pushRec(String recInfoUrl, String mediaUrl){
-		pushBaseInfoManager.pushBaseRecInfo("",recInfoUrl,mediaUrl);
+		pushBaseInfoManager.pushBaseRecInfo(recInfoUrl,mediaUrl);
 	}
 
 	@PostMapping(value = "/pushregioneval")

@@ -6,6 +6,7 @@ import cn.com.egova.constant.SqlConst;
 import cn.com.egova.service.PushBaseInfoManager;
 import cn.com.egova.tools.HttpClientPoolUtils;
 import cn.com.egova.tools.HttpFileUtils;
+import com.alibaba.druid.util.StringUtils;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import org.slf4j.Logger;
@@ -23,6 +24,8 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.io.InputStream;
 import java.text.SimpleDateFormat;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.*;
 import java.util.concurrent.*;
 
@@ -39,11 +42,11 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 	@Autowired
 	@Qualifier("statJdbcTemplate")
 	JdbcTemplate jtStat;
+	
 	@Autowired
 	ShareFileInfo shareFileInfo;
 	ExecutorService singleThreadExecutor = new ThreadPoolExecutor(5, 5, 0, TimeUnit.SECONDS,
 			new ArrayBlockingQueue<>(50), new NamedThreadPoolFactory("push-media-pool"));
-	private static final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
 	private static final String FILE_SEPERATOR = "/";
 	
 	private String token;
@@ -58,17 +61,28 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 	private String getTokenUrl;
 
 	@Value("${senderCode}")
-	private String SENDER_CODE;
+	private String senderCode;
+
+	@Value("${push.regionCode}")
+	private String regionCode;
 	
-	public static String getCurrentDateStr(SimpleDateFormat sdf){
-		Date date = new Date();
-		String currentTime = sdf.format(date);
-		return currentTime;
-	}
+	private Integer regionID;
+	
+	private static final String PUSH_TO_CITY_BRAIN = "推送至城市大脑";
 
 	private void initToken() {
 		if(token==null || token.length()==0){
 			token = getAuthToken(code,tokenKey,getTokenUrl);
+		}
+	}
+
+	private void initRegionCode() {
+		if(StringUtils.isEmpty(senderCode) && !StringUtils.isEmpty(regionCode)){
+			List<Map<String, Object>> maps = jtBiz.queryForList("select region_id,region_name from tc_region where region_code=?", regionCode);
+			if(maps.size() > 0) {
+				senderCode = "推送至" + maps.get(0).get("region_name");
+				regionID = (Integer) maps.get(0).get("region_id");
+			}
 		}
 	}
 	
@@ -88,12 +102,21 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 	}
 	
 	@Override
-	public void pushBaseRecInfo(String regionCode, String recInfoUrl, final String mediaUrl) {
-		initToken();
-		String currentDateStr = getCurrentDateStr(sdf);
-		List<Map<String, Object>> recList = jtBiz.queryForList("SELECT a.* from to_rec a where a.create_time > ? or a.rec_id in (select b.rec_id from to_rec_transit b where b.syn_flag=0 and b.sender_code=?)", currentDateStr,SENDER_CODE);
-		logger.info("{} 需推送基本案件信息数据数量为：{}",currentDateStr,recList.size());
-		List<Map<String, Object>> hisRecList = jtBiz.queryForList("SELECT a.* from to_his_rec a where a.rec_id in (select b.rec_id from to_rec_transit b where b.syn_flag=0 and b.sender_code=?)", SENDER_CODE);
+	public void pushBaseRecInfo(String recInfoUrl, final String mediaUrl) {
+		initRegionCode();
+		if(PUSH_TO_CITY_BRAIN.equals(senderCode)){
+			initToken();
+		}
+		LocalDate localDate = LocalDate.now();
+		List<Map<String, Object>> recList = new ArrayList<>();
+		//过滤案件上报区域
+		if(regionID != null){
+			recList = jtBiz.queryForList("SELECT a.* from to_rec a where a.create_time > ? and district_id=? or a.rec_id in (select b.rec_id from to_rec_transit b where b.syn_flag=0 and b.sender_code=?)", localDate, regionID, senderCode);
+		} else {
+			recList = jtBiz.queryForList("SELECT a.* from to_rec a where a.create_time > ? or a.rec_id in (select b.rec_id from to_rec_transit b where b.syn_flag=0 and b.sender_code=?)", localDate, senderCode);
+		}
+		logger.info("{} 需推送基本案件信息数据数量为：{},senderCoder:{}",localDate,recList.size(),senderCode);
+		List<Map<String, Object>> hisRecList = jtBiz.queryForList("SELECT a.* from to_his_rec a where a.rec_id in (select b.rec_id from to_rec_transit b where b.syn_flag=0 and b.sender_code=?)", senderCode);
 		logger.info("【推送失败且已结案】基本案件信息数据数量为：{}",hisRecList.size());
 		recList.addAll(hisRecList);
 		logger.info("总共需基本案件信息数据数量为：{}",recList.size());
@@ -102,98 +125,115 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 		}
 		ResultInfo httpResult;
 		String result = "";
-		if (recList.size() > 0){
-			for(final Map<String, Object> map : recList){
-				Object recID = map.get("rec_id");
-				BaseRecInfoDTO baseRecInfoDTO = new BaseRecInfoDTO();
-				baseRecInfoDTO.setEventId(String.valueOf(recID));
-				baseRecInfoDTO.setEventType((String) map.get("main_type_name"));
-				baseRecInfoDTO.setEventSubType(String.valueOf(map.get("sub_type_id")));
-				baseRecInfoDTO.setEventLevel(String.valueOf(map.get("event_level_id")));
-				baseRecInfoDTO.setEventSource(String.valueOf(map.get("event_src_id")));
-				baseRecInfoDTO.setEventTile((String) map.get("rec_type_name"));//标题选择案件类型
-				baseRecInfoDTO.setEventDesc((String) map.get("event_desc"));
-				baseRecInfoDTO.setEventAddress((String) map.get("address"));
-				baseRecInfoDTO.setCoordX( null == map.get("coordinate_x") ? 0.0f : (double)map.get("coordinate_x"));
-				baseRecInfoDTO.setCoordY(null == map.get("coordinate_y") ? 0.0f : (double)map.get("coordinate_y"));
-				baseRecInfoDTO.setGridName((String) map.get("duty_grid_name"));
-				baseRecInfoDTO.setReportTime((Date) map.get("create_time"));
-				baseRecInfoDTO.setGridCode(getRegionCode(map.get("cell_id")));
-				baseRecInfoDTO.setCommunityCode(getRegionCode(map.get("community_id")));
-				baseRecInfoDTO.setStreetCode(getRegionCode(map.get("street_id")));
-				baseRecInfoDTO.setDistrictCode(getRegionCode(map.get("district_id")));
-				baseRecInfoDTO.setCityCode(regionCode);
-				setReportInfo(baseRecInfoDTO,recID,map.get("patrol_id"));
-				setRecExtInfo(recID,baseRecInfoDTO);
-				setProcessInfo(baseRecInfoDTO,recID);
-				List<Map<String, Object>> mediaList = jtBiz.queryForList("SELECT * from to_media where relation_id=? and delete_flag=0", recID);
-				if(mediaList.size() == 0){
-					//考虑历史案卷
-					mediaList = jtBiz.queryForList("SELECT * from to_his_media where relation_id=? and delete_flag=0", recID);
+		ArrayList<BaseRecInfoDTO> recInfoDTOS = new ArrayList<>();
+		LocalTime localTime = LocalTime.now();
+		for(Map<String, Object> map : recList){
+			Object recID = map.get("rec_id");
+			BaseRecInfoDTO baseRecInfoDTO = new BaseRecInfoDTO();
+			baseRecInfoDTO.setEventId(String.valueOf(recID));
+			baseRecInfoDTO.setEventType((String) map.get("main_type_name"));
+			baseRecInfoDTO.setEventSubType(String.valueOf(map.get("sub_type_id")));
+			baseRecInfoDTO.setEventLevel(String.valueOf(map.get("event_level_id")));
+			baseRecInfoDTO.setEventSource(String.valueOf(map.get("event_src_id")));
+			baseRecInfoDTO.setEventTile((String) map.get("rec_type_name"));//标题选择案件类型
+			baseRecInfoDTO.setEventDesc((String) map.get("event_desc"));
+			baseRecInfoDTO.setEventAddress((String) map.get("address"));
+			baseRecInfoDTO.setCoordX( null == map.get("coordinate_x") ? 0.0f : (double)map.get("coordinate_x"));
+			baseRecInfoDTO.setCoordY(null == map.get("coordinate_y") ? 0.0f : (double)map.get("coordinate_y"));
+			baseRecInfoDTO.setGridName((String) map.get("duty_grid_name"));
+			baseRecInfoDTO.setReportTime((Date) map.get("create_time"));
+			baseRecInfoDTO.setGridCode(getRegionCode(map.get("cell_id")));
+			baseRecInfoDTO.setCommunityCode(getRegionCode(map.get("community_id")));
+			baseRecInfoDTO.setStreetCode(getRegionCode(map.get("street_id")));
+			baseRecInfoDTO.setDistrictCode(getRegionCode(map.get("district_id")));
+			baseRecInfoDTO.setCityCode(regionCode);
+			setReportInfo(baseRecInfoDTO,recID,map.get("patrol_id"));
+			setRecExtInfo(recID,baseRecInfoDTO);
+			setProcessInfo(baseRecInfoDTO,recID);
+			List<Map<String, Object>> mediaList = jtBiz.queryForList("SELECT * from to_media where relation_id=? and delete_flag=0", recID);
+			if(mediaList.size() == 0){
+				//考虑历史案卷
+				mediaList = jtBiz.queryForList("SELECT * from to_his_media where relation_id=? and delete_flag=0", recID);
+			}
+			StringBuilder mediaIDStr = new StringBuilder();
+			if(mediaList.size() > 0){
+				for(Map<String, Object> media : mediaList){
+					mediaIDStr.append(media.get("media_id")).append(",");
 				}
-				StringBuilder mediaIDStr = new StringBuilder();
-				if(mediaList.size() > 0){
-					for(Map<String, Object> media : mediaList){
-						mediaIDStr.append(media.get("media_id")).append(",");
-					}
-					String substring = mediaIDStr.substring(0, mediaIDStr.length() - 1);
-					baseRecInfoDTO.setAttachments(substring);
-				}
-				result = HttpClientPoolUtils.sendPostJson(recInfoUrl, JSONObject.toJSONString(Arrays.asList(baseRecInfoDTO)),token);
+				String substring = mediaIDStr.substring(0, mediaIDStr.length() - 1);
+				baseRecInfoDTO.setAttachments(substring);
+			}
+			recInfoDTOS.add(baseRecInfoDTO);
+			if(recInfoDTOS.size() == 50){
+				result = HttpClientPoolUtils.sendPostJson(recInfoUrl, JSONObject.toJSONString(recInfoDTOS),token);
 				httpResult = JSON.parseObject(result, ResultInfo.class);
 				if(httpResult == null) {
-					logger.info("【事件详情数据推送】发送http请求失败，请求url:{}，请求数据JSON:{}",recInfoUrl,JSONObject.toJSONString(baseRecInfoDTO));
-					updateRecTran("【事件详情数据推送】返回信息为空，请尝试ping第三方ip:"+recInfoUrl,recID,0);
-				} else if (httpResult.isSuccess()){
+					logger.info("【事件详情数据推送】发送http请求失败，请求url:{}，请求数据JSON:{}",recInfoUrl,JSONObject.toJSONString(recInfoDTOS));
+					for(BaseRecInfoDTO  recInfoDTO: recInfoDTOS){
+						Integer eventID = Integer.valueOf(recInfoDTO.getEventId());
+						updateRecTran("【事件详情数据推送】返回信息为空，请尝试ping第三方ip:"+recInfoUrl,eventID,0);
+					}
+				} else if(httpResult.isSuccess()){
 					logger.info("【事件详情数据推送】发送http请求成功，返回值：{}",result);
-					updateRecTran("推送成功",recID,1);
-					List<Map<String, Object>> finalMediaList = mediaList;
-					singleThreadExecutor.execute(() -> {
-						for(Map<String, Object> media : finalMediaList){
-							Object mediaID = media.get("media_id");
-							String mediaName = (String) media.get("media_name");
-							String filePath = media.get("media_path") +FILE_SEPERATOR+mediaName;
-							InputStream inputStream = null;
-							try {
-								inputStream = HttpFileUtils.getFileInputStream(filePath, shareFileInfo);
-								MockMultipartFile mockMultipartFile = new MockMultipartFile(mediaName,media.get("media_usage")+mediaName,"",inputStream);
-								Map<String, MultipartFile> fileHashMap = new HashMap<>(1);
-								fileHashMap.put("files",mockMultipartFile);
-								Map<String, String> headParams = new HashMap<>(1);
-								headParams.put("token",token);
-								Map<String, String> otherParams = new HashMap<>(1);
-								otherParams.put("eventId", String.valueOf(recID));
-								String resultStr = HttpClientPoolUtils.sendPostWithFile(mediaUrl, fileHashMap, otherParams, headParams);
-								ResultInfo mediaResult = JSON.parseObject(resultStr, ResultInfo.class);
-								if (mediaResult == null){
-									logger.info("http上传图片失败，返回值为空，请求url:{}",mediaUrl);
-									updateRecMediaTrans("http推送图片返回值为空，请尝试ping第三方ip："+mediaUrl,mediaID,0);
-								} else if (mediaResult.isSuccess()) {
-									logger.info("http上传图片请求成功，返回值：{}", resultStr);
-									updateRecMediaTrans("http上传图片请求成功",mediaID,1);
-								} else {
-									logger.info("http上传图片失败，返回值：{}",resultStr);
-									updateRecMediaTrans(resultStr,mediaID,0);
-								}
-							} catch (IOException e) {
-								logger.error("推送多媒体服务出错",e);
-								updateRecMediaTrans("推送多媒体服务出错："+e.getMessage(),mediaID,0);
-								break;
-							}
-						}
-					});
-				} else {
-					//重新请求授权
+					for(BaseRecInfoDTO recInfoDTO : recInfoDTOS) {
+						Integer eventID = Integer.valueOf(recInfoDTO.getEventId());
+						updateRecTran("推送成功", eventID, 1);
+					}
+				} else if(PUSH_TO_CITY_BRAIN.equals(senderCode)){
+					//重新请求授权-推送城市大脑需要
 					token = getAuthToken(code,tokenKey,getTokenUrl);
-					logger.info("事件详情数据推送发送http请求失败，案件号：{}，返回值：{}",recID,result);
-					updateRecTran(result,recID,0);
+					logger.info("事件详情数据推送发送http请求失败，重新获取token");
+					for(BaseRecInfoDTO recInfoDTO : recInfoDTOS) {
+						Integer eventID = Integer.valueOf(recInfoDTO.getEventId());
+						updateRecTran(result, eventID, 0);
+					}
 				}
+				recInfoDTOS.clear();
+			}
+			//推送多媒体
+			if(!StringUtils.isEmpty(mediaUrl)){
+				List<Map<String, Object>> finalMediaList = mediaList;
+				singleThreadExecutor.execute(() -> {
+					for(Map<String, Object> media : finalMediaList){
+						Object mediaID = media.get("media_id");
+						String mediaName = (String) media.get("media_name");
+						String filePath = media.get("media_path") +FILE_SEPERATOR+mediaName;
+						InputStream inputStream = null;
+						try {
+							inputStream = HttpFileUtils.getFileInputStream(filePath, shareFileInfo);
+							MockMultipartFile mockMultipartFile = new MockMultipartFile(mediaName,media.get("media_usage")+mediaName,"",inputStream);
+							Map<String, MultipartFile> fileHashMap = new HashMap<>(1);
+							fileHashMap.put("files",mockMultipartFile);
+							Map<String, String> headParams = new HashMap<>(1);
+							headParams.put("token",token);
+							Map<String, String> otherParams = new HashMap<>(1);
+							otherParams.put("eventId", String.valueOf(recID));
+							String resultStr = HttpClientPoolUtils.sendPostWithFile(mediaUrl, fileHashMap, otherParams, headParams);
+							ResultInfo mediaResult = JSON.parseObject(resultStr, ResultInfo.class);
+							if (mediaResult == null){
+								logger.info("http上传图片失败，返回值为空，请求url:{}",mediaUrl);
+								updateRecMediaTrans("http推送图片返回值为空，请尝试ping第三方ip："+mediaUrl,mediaID,0);
+							} else if (mediaResult.isSuccess()) {
+								logger.info("http上传图片请求成功，返回值：{}", resultStr);
+								updateRecMediaTrans("http上传图片请求成功",mediaID,1);
+							} else {
+								logger.info("http上传图片失败，返回值：{}",resultStr);
+								updateRecMediaTrans(resultStr,mediaID,0);
+							}
+						} catch (IOException e) {
+							logger.error("推送多媒体服务出错",e);
+							updateRecMediaTrans("推送多媒体服务出错："+e.getMessage(),mediaID,0);
+							break;
+						}
+					}
+				});
 			}
 		}
 	}
 
 	private void setRecExtInfo(Object recID, BaseRecInfoDTO baseRecInfoDTO) {
 		List<Map<String, Object>> bizMap = jtBiz.queryForList(SqlConst.getRecBaseExtSql, recID);
+		if(bizMap.size() == 0) bizMap = jtBiz.queryForList(SqlConst.getHisRecBaseExtSql, recID);
 		if(bizMap.size() > 0){
 			Map<String, Object> map = bizMap.get(0);
 			baseRecInfoDTO.setTaskId(String.valueOf(map.get("taskId")));
@@ -209,11 +249,11 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 		if(statMap.size() > 0){
 			Map<String, Object> map = statMap.get(0);
 			baseRecInfoDTO.setEventStatus((String) map.get("eventStatus"));
-			baseRecInfoDTO.setHandleNumber((String) map.get("handleNumber"));
-			baseRecInfoDTO.setReworkNumber((String) map.get("reworkNumber"));
+			baseRecInfoDTO.setHandleNumber(String.valueOf(map.get("handleNumber")));
+			baseRecInfoDTO.setReworkNumber(String.valueOf(map.get("reworkNumber")));
 			baseRecInfoDTO.setNewInstTime((Date) map.get("newInstTime"));
 			baseRecInfoDTO.setHandleUnitName((String) map.get("handleUnitName"));
-			baseRecInfoDTO.setResultEventTime((String) map.get("resultEventTime"));
+			baseRecInfoDTO.setResultEventTime((Date) map.get("resultEventTime"));
 			baseRecInfoDTO.setResultEventUserName((String) map.get("resultEventUserName"));
 			baseRecInfoDTO.setCancelEventTime((Date) map.get("cancelEventTime"));
 			baseRecInfoDTO.setCancelOpinion((String) map.get("cancelOpinion"));
@@ -222,7 +262,11 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 
 	@Override
 	public void pushRegionEvalInfo(String regionEvalUrl) {
-		initToken();
+		if(StringUtils.isEmpty(regionEvalUrl)) return;
+		initRegionCode();
+		if(PUSH_TO_CITY_BRAIN.equals(senderCode)){
+			initToken();
+		}
 		List<RegionEvalDTO> regionEvalDTOS = jtStat.query(SqlConst.getRegionEvalSql, new BeanPropertyRowMapper<>(RegionEvalDTO.class));
 		logger.info("【区域评价】数据推送定时任务开始,需推送数据：{}",regionEvalDTOS.size());
 		if(regionEvalDTOS.size()>0){
@@ -240,8 +284,17 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 
 	@Override
 	public void pushUnitEvalInfo(String unitEvalUrl) {
-		initToken();
-		List<UnitEvalDTO> unitEvalDTOS = jtStat.query(SqlConst.getUnitEvalSql, new BeanPropertyRowMapper<>(UnitEvalDTO.class));
+		if(StringUtils.isEmpty(unitEvalUrl)) return;
+		initRegionCode();
+		if(PUSH_TO_CITY_BRAIN.equals(senderCode)){
+			initToken();
+		}
+		List<UnitEvalDTO> unitEvalDTOS = new ArrayList<>();
+		if(regionID!=null){
+			unitEvalDTOS = jtStat.query(SqlConst.getExactlyUnitEvalSql, new BeanPropertyRowMapper<>(UnitEvalDTO.class), regionID);
+		} else {
+			unitEvalDTOS = jtStat.query(SqlConst.getUnitEvalSql, new BeanPropertyRowMapper<>(UnitEvalDTO.class));
+		}
 		logger.info("【部门评价】数据推送定时任务开始,需推送数据：{}",unitEvalDTOS.size());
 		if(unitEvalDTOS.size()>0){
 			String result = HttpClientPoolUtils.sendPostJson(unitEvalUrl, JSONObject.toJSONString(unitEvalDTOS),token);
@@ -323,7 +376,7 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 				if(hisFlag){
 					lastActID = jtBiz.queryForObject("SELECT act_id from to_his_wf_act_inst where last_act_flag=1 and rec_id=" + recID, Integer.class);
 				} else {
-					lastActID = jtBiz.queryForObject("SELECT act_id from to_wf_act_inst where last_act_flag=1 and rec_id=" + recID, Integer.class);	
+					lastActID = jtBiz.queryForObject("SELECT act_id from to_wf_act_inst where last_act_flag=1 and rec_id=" + recID, Integer.class);
 				}
 			} catch (Exception e){
 				logger.error("to_wf_act_inst和to_his_wf_act_inst表中未找到last_act_flag为1的案卷信息，recID:{}",recID,e);
@@ -344,7 +397,7 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 				}
 			}
 			baseRecInfoDTO.setProcessActs(processInfoList);
-	} 
+		}
 	}
 	
 	
@@ -357,9 +410,9 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 	private void updateRecTran(String result, Object recID,Integer synFlag) {
 		Integer count = jtBiz.queryForObject("select count(1) from to_rec_transit where rec_id=" + recID, Integer.class);
 		if(count==0 && synFlag==0){
-			jtBiz.update("INSERT into to_rec_transit(rec_id,create_time,syn_flag,sender_code,call_result) values (?,now(),?,?,?)",recID,synFlag,SENDER_CODE,result);
+			jtBiz.update("INSERT into to_rec_transit(rec_id,create_time,syn_flag,sender_code,call_result) values (?,now(),?,?,?)",recID,synFlag, senderCode,result);
 		} else if(count!=0){
-			jtBiz.update("update to_rec_transit set sender_code=?,syn_flag=?,syn_date=now(),call_result=? where rec_id=?",SENDER_CODE,synFlag,result,recID);
+			jtBiz.update("update to_rec_transit set sender_code=?,syn_flag=?,syn_date=now(),call_result=? where rec_id=?", senderCode,synFlag,result,recID);
 		}
 	}
 	
@@ -372,9 +425,9 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 	private void updateRecMediaTrans(String result, Object mediaID ,Integer synFlag) {
 		Integer count = jtBiz.queryForObject("select count(1) from to_rec_media_transit where media_id=" + mediaID, Integer.class);
 		if(count==0 && synFlag==0){
-			jtBiz.update("INSERT into to_rec_media_transit(media_id,create_time,syn_flag,sender_code,call_result) values (?,now(),?,?,?)",mediaID,synFlag,SENDER_CODE,result);
+			jtBiz.update("INSERT into to_rec_media_transit(media_id,create_time,syn_flag,sender_code,call_result) values (?,now(),?,?,?)",mediaID,synFlag, senderCode,result);
 		} else if(count!=0){
-			jtBiz.update("update to_rec_media_transit set sender_code=?,syn_flag=?,syn_date=now(),call_result=? where media_id=?",SENDER_CODE,synFlag,result,mediaID);
+			jtBiz.update("update to_rec_media_transit set sender_code=?,syn_flag=?,syn_date=now(),call_result=? where media_id=?", senderCode,synFlag,result,mediaID);
 		}
 	}
 	
@@ -383,7 +436,7 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 	 */
 	@Override
 	public void pushRecMediaTrans(String mediaUrl){
-		List<Map<String, Object>> mapList = jtBiz.queryForList("select * from to_rec_media_transit where syn_flag=0 and sender_code=?", SENDER_CODE);
+		List<Map<String, Object>> mapList = jtBiz.queryForList("select * from to_rec_media_transit where syn_flag=0 and sender_code=?", senderCode);
 		for(Map<String, Object> map : mapList){
 			Object mediaId = map.get("media_id");
 			List<Map<String, Object>> list = jtBiz.queryForList("select * from to_media where media_id=? and delete_flag=0", mediaId);
@@ -419,4 +472,5 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 			}
 		}
 	}
+	
 }

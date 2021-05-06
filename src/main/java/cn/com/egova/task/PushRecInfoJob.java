@@ -1,8 +1,6 @@
 package cn.com.egova.task;
 
 import cn.com.egova.service.PushBaseInfoManager;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.PropertySource;
@@ -16,9 +14,6 @@ public class PushRecInfoJob {
 	
 	@Autowired
 	PushBaseInfoManager pushBaseInfoManager;
-
-	@Value("${push.regionCode}")
-	private String regionCode;
 	
 	@Value("${push.rec.baseInfo.url}")
 	private String recInfoUrl;
@@ -37,7 +32,7 @@ public class PushRecInfoJob {
 	 */
 	@Scheduled(cron= "${push.rec.baseInfo.cron}")
 	public void pushBaseRecInfo(){
-		pushBaseInfoManager.pushBaseRecInfo(regionCode,recInfoUrl,mediaUrl);
+		pushBaseInfoManager.pushBaseRecInfo(recInfoUrl,mediaUrl);
 	}
 	
 	/**
