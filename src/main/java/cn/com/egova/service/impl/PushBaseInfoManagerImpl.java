@@ -123,10 +123,7 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 		if(recList.size() == 0){
 			return;
 		}
-		ResultInfo httpResult;
-		String result = "";
 		ArrayList<BaseRecInfoDTO> recInfoDTOS = new ArrayList<>();
-		LocalTime localTime = LocalTime.now();
 		for(Map<String, Object> map : recList){
 			Object recID = map.get("rec_id");
 			BaseRecInfoDTO baseRecInfoDTO = new BaseRecInfoDTO();
@@ -165,30 +162,7 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 			}
 			recInfoDTOS.add(baseRecInfoDTO);
 			if(recInfoDTOS.size() == 50){
-				result = HttpClientPoolUtils.sendPostJson(recInfoUrl, JSONObject.toJSONString(recInfoDTOS),token);
-				httpResult = JSON.parseObject(result, ResultInfo.class);
-				if(httpResult == null) {
-					logger.info("【事件详情数据推送】发送http请求失败，请求url:{}，请求数据JSON:{}",recInfoUrl,JSONObject.toJSONString(recInfoDTOS));
-					for(BaseRecInfoDTO  recInfoDTO: recInfoDTOS){
-						Integer eventID = Integer.valueOf(recInfoDTO.getEventId());
-						updateRecTran("【事件详情数据推送】返回信息为空，请尝试ping第三方ip:"+recInfoUrl,eventID,0);
-					}
-				} else if(httpResult.isSuccess()){
-					logger.info("【事件详情数据推送】发送http请求成功，返回值：{}",result);
-					for(BaseRecInfoDTO recInfoDTO : recInfoDTOS) {
-						Integer eventID = Integer.valueOf(recInfoDTO.getEventId());
-						updateRecTran("推送成功", eventID, 1);
-					}
-				} else if(PUSH_TO_CITY_BRAIN.equals(senderCode)){
-					//重新请求授权-推送城市大脑需要
-					token = getAuthToken(code,tokenKey,getTokenUrl);
-					logger.info("事件详情数据推送发送http请求失败，重新获取token");
-					for(BaseRecInfoDTO recInfoDTO : recInfoDTOS) {
-						Integer eventID = Integer.valueOf(recInfoDTO.getEventId());
-						updateRecTran(result, eventID, 0);
-					}
-				}
-				recInfoDTOS.clear();
+				pushRecInfoDTOS(recInfoUrl,recInfoDTOS);
 			}
 			//推送多媒体
 			if(!StringUtils.isEmpty(mediaUrl)){
@@ -229,6 +203,37 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 				});
 			}
 		}
+		//不足50个的还要推一次
+		if(recInfoDTOS.size() > 0){
+			pushRecInfoDTOS(recInfoUrl,recInfoDTOS);
+		}
+	}
+
+	private void pushRecInfoDTOS(String recInfoUrl,ArrayList<BaseRecInfoDTO> recInfoDTOS){
+		String result = HttpClientPoolUtils.sendPostJson(recInfoUrl, JSONObject.toJSONString(recInfoDTOS),token);
+		ResultInfo httpResult = JSON.parseObject(result, ResultInfo.class);
+		if(httpResult == null) {
+			logger.info("【事件详情数据推送】发送http请求失败，请求url:{}，请求数据JSON:{}",recInfoUrl,JSONObject.toJSONString(recInfoDTOS));
+			for(BaseRecInfoDTO  recInfoDTO: recInfoDTOS){
+				Integer eventID = Integer.valueOf(recInfoDTO.getEventId());
+				updateRecTran("【事件详情数据推送】返回信息为空，请尝试ping第三方ip:"+recInfoUrl,eventID,0);
+			}
+		} else if(httpResult.isSuccess()){
+			logger.info("【事件详情数据推送】发送http请求成功，返回值：{}",result);
+			for(BaseRecInfoDTO recInfoDTO : recInfoDTOS) {
+				Integer eventID = Integer.valueOf(recInfoDTO.getEventId());
+				updateRecTran("推送成功", eventID, 1);
+			}
+		} else if(PUSH_TO_CITY_BRAIN.equals(senderCode)){
+			//重新请求授权-推送城市大脑需要
+			token = getAuthToken(code,tokenKey,getTokenUrl);
+			logger.info("事件详情数据推送发送http请求失败，重新获取token");
+			for(BaseRecInfoDTO recInfoDTO : recInfoDTOS) {
+				Integer eventID = Integer.valueOf(recInfoDTO.getEventId());
+				updateRecTran(result, eventID, 0);
+			}
+		}
+		recInfoDTOS.clear();
 	}
 
 	private void setRecExtInfo(Object recID, BaseRecInfoDTO baseRecInfoDTO) {
