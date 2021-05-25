@@ -11,4 +11,8 @@ public interface PushBaseInfoManager {
 	String getAuthToken(String code, String tokenKey, String getTokenUrl);
 
 	void pushRecMediaTrans(String mediaUrl);
+
+	void pushHisRecInfo(String recInfoUrl, String mediaUrl);
+
+	void testRollback();
 }

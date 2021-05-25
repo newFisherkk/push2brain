@@ -5,6 +5,7 @@ CREATE TABLE `to_rec_transit` (
   `create_time` datetime NOT NULL,
   `syn_flag` int DEFAULT NULL,
   `syn_date` datetime DEFAULT NULL,
+  `archive_flag` int DEFAULT NULL,
   `sender_code` varchar(255) DEFAULT NULL,
   `call_result` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`rec_id`)

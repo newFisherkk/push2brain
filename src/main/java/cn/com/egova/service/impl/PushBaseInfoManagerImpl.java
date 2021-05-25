@@ -19,6 +19,8 @@ import org.springframework.jdbc.core.BeanPropertyRowMapper;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.stereotype.Service;
+import org.springframework.test.context.TestConstructor;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -32,6 +34,7 @@ import java.util.concurrent.*;
 
 @Service
 @PropertySource("classpath:config.properties")
+@Transactional(value = "bizTransactionManager")
 public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 	
 	private static final Logger logger = LoggerFactory.getLogger(PushBaseInfoManagerImpl.class);
@@ -116,13 +119,13 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 			recList = jtBiz.queryForList("SELECT a.* from to_rec a where a.create_time > ? or a.rec_id in (select b.rec_id from to_rec_transit b where b.syn_flag=0 and b.sender_code=?)", localDate, senderCode);
 		}
 		logger.info("{} 需推送基本案件信息数据数量为：{},senderCoder:{}",localDate,recList.size(),senderCode);
-		List<Map<String, Object>> hisRecList = jtBiz.queryForList("SELECT a.* from to_his_rec a where a.rec_id in (select b.rec_id from to_rec_transit b where b.syn_flag=0 and b.sender_code=?)", senderCode);
-		logger.info("【推送失败且已结案】基本案件信息数据数量为：{}",hisRecList.size());
-		recList.addAll(hisRecList);
-		logger.info("总共需基本案件信息数据数量为：{}",recList.size());
 		if(recList.size() == 0){
 			return;
 		}
+		buildDTOAndPush(recInfoUrl, mediaUrl, recList,0);
+	}
+
+	private void buildDTOAndPush(String recInfoUrl, String mediaUrl, List<Map<String, Object>> recList,Integer archiveFlag) {
 		ArrayList<BaseRecInfoDTO> recInfoDTOS = new ArrayList<>();
 		for(Map<String, Object> map : recList){
 			Object recID = map.get("rec_id");
@@ -162,7 +165,7 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 			}
 			recInfoDTOS.add(baseRecInfoDTO);
 			if(recInfoDTOS.size() == 50){
-				pushRecInfoDTOS(recInfoUrl,recInfoDTOS);
+				pushRecInfoDTOS(recInfoUrl,recInfoDTOS,archiveFlag);
 			}
 			//推送多媒体
 			if(!StringUtils.isEmpty(mediaUrl)){
@@ -205,24 +208,24 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 		}
 		//不足50个的还要推一次
 		if(recInfoDTOS.size() > 0){
-			pushRecInfoDTOS(recInfoUrl,recInfoDTOS);
+			pushRecInfoDTOS(recInfoUrl,recInfoDTOS,archiveFlag);
 		}
 	}
 
-	private void pushRecInfoDTOS(String recInfoUrl,ArrayList<BaseRecInfoDTO> recInfoDTOS){
+	private void pushRecInfoDTOS(String recInfoUrl,ArrayList<BaseRecInfoDTO> recInfoDTOS,Integer archiveFlag){
 		String result = HttpClientPoolUtils.sendPostJson(recInfoUrl, JSONObject.toJSONString(recInfoDTOS),token);
 		ResultInfo httpResult = JSON.parseObject(result, ResultInfo.class);
 		if(httpResult == null) {
 			logger.info("【事件详情数据推送】发送http请求失败，请求url:{}，请求数据JSON:{}",recInfoUrl,JSONObject.toJSONString(recInfoDTOS));
 			for(BaseRecInfoDTO  recInfoDTO: recInfoDTOS){
 				Integer eventID = Integer.valueOf(recInfoDTO.getEventId());
-				updateRecTran("【事件详情数据推送】返回信息为空，请尝试ping第三方ip:"+recInfoUrl,eventID,0);
+				updateRecTran("【事件详情数据推送】返回信息为空，请尝试ping第三方ip:"+recInfoUrl,eventID,0,archiveFlag);
 			}
 		} else if(httpResult.isSuccess()){
 			logger.info("【事件详情数据推送】发送http请求成功，返回值：{}",result);
 			for(BaseRecInfoDTO recInfoDTO : recInfoDTOS) {
 				Integer eventID = Integer.valueOf(recInfoDTO.getEventId());
-				updateRecTran("推送成功", eventID, 1);
+				updateRecTran("推送成功", eventID, 1,archiveFlag);
 			}
 		} else if(PUSH_TO_CITY_BRAIN.equals(senderCode)){
 			//重新请求授权-推送城市大脑需要
@@ -230,7 +233,7 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 			logger.info("事件详情数据推送发送http请求失败，重新获取token");
 			for(BaseRecInfoDTO recInfoDTO : recInfoDTOS) {
 				Integer eventID = Integer.valueOf(recInfoDTO.getEventId());
-				updateRecTran(result, eventID, 0);
+				updateRecTran(result, eventID, 0,archiveFlag);
 			}
 		}
 		recInfoDTOS.clear();
@@ -408,16 +411,17 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 	
 	/**
 	 * 更新推送案卷表
+	 * 
 	 * @param result
 	 * @param recIDs
 	 * @param synFlag
 	 */
-	private void updateRecTran(String result, Object recID,Integer synFlag) {
+	private void updateRecTran(String result, Object recID,Integer synFlag,Integer archiveFlag) {
 		Integer count = jtBiz.queryForObject("select count(1) from to_rec_transit where rec_id=" + recID, Integer.class);
-		if(count==0 && synFlag==0){
-			jtBiz.update("INSERT into to_rec_transit(rec_id,create_time,syn_flag,sender_code,call_result) values (?,now(),?,?,?)",recID,synFlag, senderCode,result);
+		if(count==0){
+			jtBiz.update("INSERT into to_rec_transit(rec_id,create_time,syn_flag,syn_date,sender_code,call_result,archive_flag) values (?,now(),?,now(),?,?,?)",recID,synFlag, senderCode,result,archiveFlag);
 		} else if(count!=0){
-			jtBiz.update("update to_rec_transit set sender_code=?,syn_flag=?,syn_date=now(),call_result=? where rec_id=?", senderCode,synFlag,result,recID);
+			jtBiz.update("update to_rec_transit set sender_code=?,syn_flag=?,syn_date=now(),call_result=?,archive_flag=? where rec_id=?", senderCode,synFlag,result,archiveFlag,recID);
 		}
 	}
 	
@@ -477,5 +481,27 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 			}
 		}
 	}
-	
+
+	@Override
+	public void pushHisRecInfo(String recInfoUrl, String mediaUrl) {
+		initRegionCode();
+		if(PUSH_TO_CITY_BRAIN.equals(senderCode)){
+			initToken();
+		}
+		//加上推送失败syn_flag=0,避免失败已结案的案卷滞留
+		List<Map<String, Object>> hisRecList = jtBiz.queryForList("SELECT * from to_his_rec a where a.rec_id in (select b.rec_id from to_rec_transit b where b.sender_code=? and (b.archive_flag=0 or b.syn_flag=0))", senderCode);
+		logger.info("需更新【已结案】基本案件信息数据数量为：{}",hisRecList.size());
+		if(hisRecList.size()==0){
+			return;
+		}
+		buildDTOAndPush(recInfoUrl,mediaUrl,hisRecList,1);
+	}
+
+	@Override
+	public void testRollback() {
+		jtBiz.update("update to_rec_transit set call_result='哈哈哈哈回滚吗？' where rec_id=236498");
+		int error = 1/0;
+		//已验证@Transactional(value = "bizTransactionManager")事物有效
+	}
+
 }

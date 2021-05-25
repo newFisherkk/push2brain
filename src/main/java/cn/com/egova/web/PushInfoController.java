@@ -31,5 +31,14 @@ public class PushInfoController {
 	private void pushMedia(String mediaUrl){
 		pushBaseInfoManager.pushRecMediaTrans(mediaUrl);
 	}
-	
+
+	@PostMapping(value = "/pushhistrec")
+	private void pushHisRec(String recInfoUrl, String mediaUrl){
+		pushBaseInfoManager.pushHisRecInfo(recInfoUrl,mediaUrl);
+	}
+
+	@PostMapping(value = "/testrollback")
+	private void testRollback(){
+		pushBaseInfoManager.testRollback();
+	}
 }

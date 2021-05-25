@@ -50,4 +50,12 @@ public class PushRecInfoJob {
 	public void pushUnitEvalInfo(){
 		pushBaseInfoManager.pushUnitEvalInfo(unitEvalUrl);
 	}
+
+	/**
+	 * 推送已结案的案件信息
+	 */
+	@Scheduled(cron = "${push.eval.archive.cron}")
+	public void pushHisRecInfo(){
+		pushBaseInfoManager.pushHisRecInfo(recInfoUrl,mediaUrl);
+	}
 }
