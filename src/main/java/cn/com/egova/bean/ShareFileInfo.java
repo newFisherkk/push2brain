@@ -19,6 +19,16 @@ public class ShareFileInfo {
 	private String user;
 	@Value("${ftp-server-password}")
 	private String password;
+	@Value("${ftp-server-mediaUrlPrefix}")
+	private String mediaUrlPrefix;
+
+	public String getMediaUrlPrefix() {
+		return mediaUrlPrefix;
+	}
+
+	public void setMediaUrlPrefix(String mediaUrlPrefix) {
+		this.mediaUrlPrefix = mediaUrlPrefix;
+	}
 
 	private String encodeAuthString; // 用于基本验证的base64编码字符
 

@@ -32,7 +32,7 @@ public class BaseRecInfoDTO extends BaseRecInfoExtDTO{
 	private String reportUserPost;
 	private String reportUserPostId;
 	private String reportType = "0";
-	private String attachments;
+	private List<MediaInfo> attachments;
 	private List<ProcessInfoDTO> processActs;
 
 	public List<ProcessInfoDTO> getProcessActs() {
@@ -236,11 +236,11 @@ public class BaseRecInfoDTO extends BaseRecInfoExtDTO{
 		this.reportType = reportType;
 	}
 
-	public String getAttachments() {
+	public List<MediaInfo> getAttachments() {
 		return attachments;
 	}
 
-	public void setAttachments(String attachments) {
+	public void setAttachments(List<MediaInfo> attachments) {
 		this.attachments = attachments;
 	}
 }

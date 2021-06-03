@@ -150,18 +150,22 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 			setReportInfo(baseRecInfoDTO,recID,map.get("patrol_id"));
 			setRecExtInfo(recID,baseRecInfoDTO);
 			setProcessInfo(baseRecInfoDTO,recID);
-			List<Map<String, Object>> mediaList = jtBiz.queryForList("SELECT * from to_media where relation_id=? and delete_flag=0", recID);
-			if(mediaList.size() == 0){
-				//考虑历史案卷
+			List<Map<String, Object>> mediaList = new ArrayList<>();
+			if(archiveFlag == 0){
+				mediaList = jtBiz.queryForList("SELECT * from to_media where relation_id=? and delete_flag=0", recID);
+			} else {
 				mediaList = jtBiz.queryForList("SELECT * from to_his_media where relation_id=? and delete_flag=0", recID);
 			}
-			StringBuilder mediaIDStr = new StringBuilder();
 			if(mediaList.size() > 0){
+				ArrayList<MediaInfo> mediaInfos = new ArrayList<>(mediaList.size());                   	
 				for(Map<String, Object> media : mediaList){
-					mediaIDStr.append(media.get("media_id")).append(",");
+					MediaInfo mediaInfo = new MediaInfo();
+					mediaInfo.setMediaURL(shareFileInfo.getMediaUrlPrefix()+FILE_SEPERATOR+media.get("media_path")+FILE_SEPERATOR+media.get("media_name"));
+					mediaInfo.setMediaUsage((String)media.get("media_usage"));
+					mediaInfo.setMediaType((String)media.get("media_type"));
+					mediaInfos.add(mediaInfo);
 				}
-				String substring = mediaIDStr.substring(0, mediaIDStr.length() - 1);
-				baseRecInfoDTO.setAttachments(substring);
+				baseRecInfoDTO.setAttachments(mediaInfos);
 			}
 			recInfoDTOS.add(baseRecInfoDTO);
 			if(recInfoDTOS.size() == 50){
@@ -227,10 +231,12 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 				Integer eventID = Integer.valueOf(recInfoDTO.getEventId());
 				updateRecTran("推送成功", eventID, 1,archiveFlag);
 			}
-		} else if(PUSH_TO_CITY_BRAIN.equals(senderCode)){
-			//重新请求授权-推送城市大脑需要
-			token = getAuthToken(code,tokenKey,getTokenUrl);
-			logger.info("事件详情数据推送发送http请求失败，重新获取token");
+		} else {
+			if(PUSH_TO_CITY_BRAIN.equals(senderCode)){
+				//重新请求授权-推送城市大脑需要
+				token = getAuthToken(code,tokenKey,getTokenUrl);
+				logger.info("事件详情数据推送发送http请求失败，重新获取token");
+			}
 			for(BaseRecInfoDTO recInfoDTO : recInfoDTOS) {
 				Integer eventID = Integer.valueOf(recInfoDTO.getEventId());
 				updateRecTran(result, eventID, 0,archiveFlag);
@@ -421,7 +427,7 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 		if(count==0){
 			jtBiz.update("INSERT into to_rec_transit(rec_id,create_time,syn_flag,syn_date,sender_code,call_result,archive_flag) values (?,now(),?,now(),?,?,?)",recID,synFlag, senderCode,result,archiveFlag);
 		} else if(count!=0){
-			jtBiz.update("update to_rec_transit set sender_code=?,syn_flag=?,syn_date=now(),call_result=?,archive_flag=? where rec_id=?", senderCode,synFlag,result,archiveFlag,recID);
+			jtBiz.update("update to_rec_transit set syn_flag=?,syn_date=now(),call_result=?,archive_flag=? where rec_id=? and sender_code=?", synFlag,result,archiveFlag,recID, senderCode);
 		}
 	}
 	
@@ -436,7 +442,7 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 		if(count==0 && synFlag==0){
 			jtBiz.update("INSERT into to_rec_media_transit(media_id,create_time,syn_flag,sender_code,call_result) values (?,now(),?,?,?)",mediaID,synFlag, senderCode,result);
 		} else if(count!=0){
-			jtBiz.update("update to_rec_media_transit set sender_code=?,syn_flag=?,syn_date=now(),call_result=? where media_id=?", senderCode,synFlag,result,mediaID);
+			jtBiz.update("update to_rec_media_transit set syn_flag=?,syn_date=now(),call_result=? where media_id=? and sender_code=?", synFlag,result,mediaID,senderCode);
 		}
 	}
 	
@@ -488,6 +494,9 @@ public class PushBaseInfoManagerImpl implements PushBaseInfoManager {
 		if(PUSH_TO_CITY_BRAIN.equals(senderCode)){
 			initToken();
 		}
+		//删除表中已推送完成并且已结案的案件，避免数据积压导致表过大
+		int update = jtBiz.update("DELETE from to_rec_transit where syn_flag=1 and archive_flag=1");
+		logger.info("删除已推送完成并且已结案的案件信息数量：{}",update);
 		//加上推送失败syn_flag=0,避免失败已结案的案卷滞留
 		List<Map<String, Object>> hisRecList = jtBiz.queryForList("SELECT * from to_his_rec a where a.rec_id in (select b.rec_id from to_rec_transit b where b.sender_code=? and (b.archive_flag=0 or b.syn_flag=0))", senderCode);
 		logger.info("需更新【已结案】基本案件信息数据数量为：{}",hisRecList.size());
